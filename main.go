@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -33,45 +34,37 @@ func main() {
 	flag.Var(&ranges, "range", "Range elemets for simple numbers search")
 	flag.Parse()
 	finishedAll := make(chan bool)
-	finished := make(chan bool, len(ranges))
 	timeLimit := time.After(time.Duration(timeout) * time.Second)
+
+	wg := new(sync.WaitGroup)
 
 	file, err := os.OpenFile(fileName+".txt", os.O_WRONLY|os.O_CREATE|os.O_APPEND|os.O_TRUNC, 0o777)
 	if err != nil {
 		log.Fatal("File creating error")
 	}
-
-	go finishProgram(finishedAll, finished)
+	defer file.Close()
 
 	for _, r := range ranges {
-		go HandleRange(r, finished, file)
+		wg.Add(1)
+		go HandleRange(wg, r, file)
 	}
+
+	go finishProgram(wg, finishedAll)
+
 	select {
 	case <-timeLimit:
 		fmt.Println("Time limit")
-		file.Close()
 	case <-finishedAll:
 		fmt.Println("Strings are ready")
-		file.Close()
 	}
 }
 
-func finishProgram(results chan bool, input chan bool) {
-	limit := cap(input)
-	for {
-		select {
-		case <-input:
-			limit -= 1
-			if limit == 0 {
-				results <- true
-			}
-		default:
-			continue
-		}
-	}
+func finishProgram(wg *sync.WaitGroup, finishedAll chan bool) {
+	wg.Wait()
+	finishedAll <- true
 }
 
-func HandleRange(rangeString string, finished chan bool, file *os.File) {
+func HandleRange(wg *sync.WaitGroup, rangeString string, file *os.File) {
 	resChan := make(chan []byte)
 	rangeArray := strings.Split(rangeString, ":")
 	minValue, err := strconv.Atoi(rangeArray[0])
@@ -87,7 +80,7 @@ func HandleRange(rangeString string, finished chan bool, file *os.File) {
 
 	res := <-resChan
 	file.WriteString(fmt.Sprintf("For range %v answer is: %v", rangeString, string(res)+"\n"))
-	finished <- true
+	wg.Done()
 }
 
 func findNumbers(minValue int, maxValue uint64, resArray chan []byte) {
